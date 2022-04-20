@@ -4,10 +4,9 @@
 import os
 import sys
 import vw
-
 import re
-
-from random import randint
+import socket
+from datetime import datetime
 
 mask = vw.mask
 cfg_dir = vw.cfg_dir
@@ -45,7 +44,9 @@ def help():
     print("lw [-c][--node][-r][--config] {component}\n")
     print("   -c {argv}")
     print("        Count lines to print (default=1000)")
-    print("   --node")
+    print("   --cat")
+    print("        Print all log file (default=1000)")
+    print("   --node or -n")
     print("        Choose node (default=0)")
     print("   --config")
     print("        Show config file for choosen component")
@@ -60,12 +61,9 @@ def help():
     print("\n\nThanks!")
     sys.exit()
 
-if ('-h' in sys.argv) or ('--help' in sys.argv):
+if ('-h' in sys.argv) or ('--help' in sys.argv) or len(sys.argv) == 1:
     help()
 
-
-if len(sys.argv) == 1:
-    help()
 
 count_lines = '1000'
 if "-c" in sys.argv:
@@ -79,15 +77,24 @@ if ("--analize") in sys.argv:
     count_lines = "3"
 
 def is_local(host):
-    if "localhost" in host or "127.0.0.1" in host or os.environ.get('HOSTNAME') in host or socket.gethostbyname(socket.gethostname()) in host or os.environ.get('HOSTNAME').split(".")[0] in host:
+    host = str(host)
+    try:
+        s = str(os.environ.get('HOSTNAME').split(".")[0])
+    except AttributeError:
+        s = ""
+    if "localhost" in host or "127.0.0.1" in host or str(os.environ.get('HOSTNAME')) in host or str(socket.gethostbyname(socket.gethostname())) in host or s in host:
         return True
     else:
         return False
 
-import socket
-def uhq(mask, node):
+def uhq(mask, node, count_lines):
     key = list(vw.components_t.keys())
+    print(mask)
+    if "--cat" in sys.argv or " cat%s" in mask:
+        count_lines = ""
     for i in range(len(vw.components_t)):
+        if ".txt" in vw.components_t[key[i]][1] or ".log" in vw.components_t[key[i]][1]:
+            mask = mask.rstrip(".main.log")
         for d in vw.components_t[key[i]][2]:
             if d in sys.argv[1:]:
                 try:
@@ -104,6 +111,30 @@ def uhq(mask, node):
                     else:
                         cmd = mask % (vw.components_t[key[i]][0][node], count_lines, vw.components_t[key[i]][1])
                 break
+
+
+def archive(mask, node,year,month,day):
+    key = list(vw.components_t.keys())
+    for i in range(len(vw.components_t)):
+        for d in vw.components_t[key[i]][2]:
+            if d in sys.argv[1:]:
+                try:
+                    if is_local(vw.components_t[key[i]][0][node]):
+                        cmd = mask[mask.find("%s")+2:]  % (key[i], vw.components_t[key[i]][1],year,month,day)
+                    else:
+                        cmd = mask % (vw.components_t[key[i]][0][node], key[i], vw.components_t[key[i]][1],year,month,day)
+                    os.system(cmd)
+                except IndexError:
+                    print(f'Node {node} does not exist. Try to initialize it.')
+                except TypeError:
+                    if is_local(vw.components_t[key[i]][0][node]):
+                        cmd = mask[mask.find("%s")+2:]  % (vw.components_t[key[i]][1],year,month,day)
+                    else:
+                        cmd = mask % (vw.components_t[key[i]][0][node], vw.components_t[key[i]][1],year,month,day)
+                    os.system(cmd)
+                break
+
+
 
 def show_config(mask, node):
     key = list(vw.components_t.keys())
@@ -132,7 +163,7 @@ def diff(mask, node):
                 os.system(f"lw --config {d} > {cfg_dir}/last_edits/{d}_{node}_new.yml")
                 os.system(f"diff {cfg_dir}/last_edits/{d}_{node}.yml {cfg_dir}/last_edits/{d}_{node}_new.yml")
                 if not sure:
-                    if 'y' in input(f"\nReboot {key[i].upper()}?(y/N): ").lower():
+                    if 'y' in input(f"\nReboot {key[i].upper()} from {vw.components_t[key[i]][0][node]} ? (y/N): ").lower():
                         sure = True
                     else:
                         sys.exit()
@@ -152,11 +183,26 @@ def restart(mask, node):
                         cmd = mask[mask.find("%s")+2:] % key[i]
                     else:
                         cmd = mask % (vw.components_t[key[i]][0][node], key[i])
-                    print("--> Restarting \033[1;36;40m{}\033[0;37;40m from \033[1;36;40m{}\033[0;37;40m".format(key[i], vw.components_t[key[i]][0][node]))
+                    print("--> Restarting \033[1;36;49m{}\033[0;37;49m from \033[1;36;49m{}\033[0;37;49m".format(key[i], vw.components_t[key[i]][0][node]))
                     os.system(cmd)
                 except IndexError:
                     print(f'Node {node} does not exist. Try to initialize it.')
                 break
+
+def show_port():
+    key = list(vw.components_t.keys())
+    for i in range(len(vw.components_t)):
+        for d in vw.components_t[key[i]][2]:
+            if d in sys.argv[1:]:
+                if not "--with-url" in sys.argv:
+                    print(f"{vw.components_t[key[i]][3]}")
+                    break
+                else:
+                    print(f"{vw.components_t[key[i]][0][0]}:{vw.components_t[key[i]][3]}")
+                    try:
+                        print(f"{vw.components_t[key[i]][0][1]}:{vw.components_t[key[i]][3]}")
+                    except:
+                        pass
 
 def analize():
     percent_warns = []
@@ -225,7 +271,7 @@ def analize():
             sum_total_by_comp = 0
         if (percent_errors[i]>=15):
             is_critical[components[i]] = True
-            critical = '\033[0;37;41myes\033[0;37;40m'
+            critical = '\033[0;37;41myes\033[0;37;49m'
         print("{0:13.13s} {1:5d} {2:7.2f}% {3:7d} {4:7.2f}% {5:7.2f}% {6:7s}".format(components[i],count_errors[i],percent_errors[i],count_warns[i],percent_warns[i],sum_total_by_comp,critical))
     sum_percent_err = (sum_count_err / (sum_count_err + sum_info))*100
     sum_percent_warns = (sum_count_warns / (sum_count_warns + sum_info))*100
@@ -270,8 +316,11 @@ def analize():
     print("\nFrequency by keywords(warns):\n{0}".format(freq_warn_r))
 
 try:
-    if "--node" in sys.argv:
-        node = int(sys.argv[sys.argv.index("--node")+1])
+    if ("--node" in sys.argv) or ("-n" in sys.argv):
+        try:
+            node = int(sys.argv[sys.argv.index("-n")+1])
+        except:
+            node = int(sys.argv[sys.argv.index("--node")+1])
     else:
         node = 0
     if '-r' in sys.argv or '-ry' in sys.argv:
@@ -281,8 +330,28 @@ try:
         analize()
     elif ("--config" in sys.argv):
         show_config(vw.mask_config, node)
+    elif "--cat" in sys.argv:
+        mask = mask.replace("tail -n ", "cat")
+        uhq(mask,node,count_lines)
+    elif "-f" in sys.argv:
+        year, month, day = sys.argv[sys.argv.index("-f")+1:sys.argv.index("-f")+4]
+        if int(day)==datetime.now().day:
+            mask = mask.replace("tail -n ", "cat")
+            uhq(mask,node,count_lines)
+        archive(vw.archive_mask,node, year,month,day)
+        archive(vw.archive_mask_reserve,node, year,month,day)
+    elif "-fd" in sys.argv:
+        day = sys.argv[sys.argv.index("-fd")+1]
+        if int(day)==datetime.now().day:
+            mask = mask.replace("tail -n ", "cat")
+            uhq(mask,node,count_lines)
+        archive(vw.archive_mask,node,year=datetime.now().year,month=datetime.now().month,day=day)
+        archive(vw.archive_mask_reserve,node,year=datetime.now().year,month=datetime.now().month,day=day)
+    elif "--port" in sys.argv:
+        show_port()
     else:
-        uhq(mask, node)
+        uhq(mask, node,count_lines)
 except KeyboardInterrupt:
     print("\n\nCancelled")
     sys.exit()
+
